@@ -54,9 +54,8 @@ class ImportantDate(BaseModel):
             ) from exc
         return v
 
+# Structured syllabus extraction target returned via native tool use.
 class SyllabusExtraction(BaseModel):
-    """Structured syllabus extraction target returned via native tool use."""
-
     model_config = ConfigDict(extra="forbid")
 
     course_code: str | None = Field(default=None, description="Course code if present, e.g. CS 101")
@@ -69,14 +68,13 @@ def _debug_stderr(debug: bool, message: str) -> None:
     if debug:
         print(message, file=sys.stderr)
 
+# returns the lowercase extension (e.g. '.pdf') or '.txt' for everything else
 def _detect_input_type(path: str) -> str:
-    """Returns the lowercase extension (e.g. '.pdf') or '.txt' for everything else."""
     ext = os.path.splitext(path)[1].lower()
     return ext if ext in _EXT_MAP else ".txt"
 
-
+# read a PDF or image and return a single API content block
 def _binary_blocks_from_file(path: str) -> list[ContentBlock]:
-    """Read a PDF or image and return a single API content block."""
     ext = os.path.splitext(path)[1].lower()
     block_type, media_type = _EXT_MAP[ext]
     with open(path, "rb") as f:
@@ -111,11 +109,16 @@ def _build_system_prompt() -> str:
         "Do not echo the source document."
     )
 
-def _build_user_prompt(document: str) -> str:
-    return (
-        "Extract syllabus fields from the following document.\n\n"
-        f"{document}"
-    )
+# Append the extraction instruction after the document block(s)
+def _build_user_content(doc_blocks: list[ContentBlock]) -> list[ContentBlock]:
+    instruction: ContentBlock = {
+        "type": "text",
+        "text": (
+            "Extract all syllabus fields from the document above. "
+            "Call the extract_syllabus tool with the structured data."
+        ),
+    }
+    return doc_blocks + [instruction]
 
 def _call_model(client: Anthropic, *, messages: list[dict[str, Any]], debug: bool) -> Message:
     response = client.messages.create(
@@ -137,19 +140,13 @@ def _parse_tool_use(message: Message) -> SyllabusExtraction:
         f"Model did not return a {TOOL_NAME!r} tool_use block."
     )
 
-def extract_syllabus(document: str, *, client: Anthropic, debug: bool) -> SyllabusExtraction:
-    """Single API call; model returns structured data via tool_use."""
-    messages: list[dict[str, Any]] = [{"role": "user", "content": _build_user_prompt(document)}]
-    response = _call_model(client, messages=messages, debug=debug)
-    try:
-        return _parse_tool_use(response)
-    except ValidationError as exc:
-        raise RuntimeError(
-            "Tool input did not pass Pydantic validation."
-        ) from exc
+# single API call; model returns structured data via tool_use
+def extract_syllabus(doc_blocks: list[ContentBlock], *, client: Anthropic, debug: bool) -> SyllabusExtraction:
+    messages: list[dict[str, Any]] = [{"role": "user", "content": _build_user_content(doc_blocks)}]
+    return _call_model(client, messages=messages, debug=debug)
 
+# return content blocks representing the user's document
 def _read_input(args: argparse.Namespace, *, debug: bool) -> list[ContentBlock]:
-    """Return content blocks representing the user's document."""
     if args.file is None:
         return [{"type": "text", "text": sys.stdin.read()}]
 
@@ -166,11 +163,17 @@ def _read_input(args: argparse.Namespace, *, debug: bool) -> list[ContentBlock]:
     _debug_stderr(debug, f"input_type={input_type[1:]} path={path}")
     return _binary_blocks_from_file(path)
 
-def _truncate(text: str, max_chars: int, *, debug: bool) -> str:
-    if len(text) <= max_chars:
-        return text
-    _debug_stderr(debug, f"input_truncated length={len(text)} max_chars={max_chars}")
-    return text[:max_chars]
+# truncate text blocks only; binary blocks (PDF, image) pass through unchanged
+def _truncate_content(blocks: list[ContentBlock], max_chars: int, *, debug: bool) -> list[ContentBlock]:
+    result = []
+    for block in blocks:
+        if block.get("type") == "text":
+            text = block["text"]
+            if len(text) > max_chars:
+                _debug_stderr(debug, f"input_truncated length={len(text)} max_chars={max_chars}")
+                block = {**block, "text": text[:max_chars]}
+        result.append(block)
+    return result
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
