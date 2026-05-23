@@ -69,6 +69,32 @@ def _debug_stderr(debug: bool, message: str) -> None:
     if debug:
         print(message, file=sys.stderr)
 
+def _detect_input_type(path: str) -> str:
+    """Returns the lowercase extension (e.g. '.pdf') or '.txt' for everything else."""
+    ext = os.path.splitext(path)[1].lower()
+    return ext if ext in _EXT_MAP else ".txt"
+
+
+def _binary_blocks_from_file(path: str) -> list[ContentBlock]:
+    """Read a PDF or image and return a single API content block."""
+    ext = os.path.splitext(path)[1].lower()
+    block_type, media_type = _EXT_MAP[ext]
+    with open(path, "rb") as f:
+        raw = f.read()
+    if len(raw) > MAX_BINARY_BYTES:
+        raise ValueError(
+            f"File is {len(raw) // (1024 * 1024)} MB — "
+            f"exceeds the {MAX_BINARY_BYTES // (1024 * 1024)} MB cap. "
+            "Reduce the file size or extract the text manually first."
+        )
+    b64 = base64.standard_b64encode(raw).decode("ascii")
+    return [
+        {
+            "type": block_type,
+            "source": {"type": "base64", "media_type": media_type, "data": b64},
+        }
+    ]
+
 @functools.lru_cache(maxsize=1)
 def _build_tool() -> dict[str, Any]:
     return {
