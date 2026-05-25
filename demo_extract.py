@@ -416,13 +416,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: extraction failed: {e}", file=sys.stderr)
         return 1
     try:
-        validation = validate_extraction(result, client=client, debug=args.debug)
+        validation, policy = asyncio.run(
+            run_analysis(result, client = client, debug = args.debug),
+        )
     except Exception as e:
         print(f"error: validation failed: {e}", file=sys.stderr)
         return 1
     output = {
         "extraction": result.model_dump(mode="json"),
         "validation": validation.model_dump(mode="json"),
+        "policy_flags" : policy.model_dump(mode="json"),
     }
     print(json.dumps(output, indent=2, ensure_ascii=False))
     return 0
