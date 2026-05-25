@@ -321,6 +321,23 @@ async def flag_policies(
         f"Content types: {[getattr(b, 'type', '?') for b in response.content]}"
     )
 
+# run validation and policy flagging concurrently.
+# I decided to use asyncio.gather to run the two calls concurrently because it
+# takes any number of awaitables and runs them concurrently, returning all results 
+# once every one of them finishes. Both API calls are now concurrent
+async def run_analysis(
+    extraction: SyllabusExtraction,
+    *,
+    client: Anthropic,
+    debug: bool,
+) -> tuple[ValidationResult, PolicyFlagResult]:
+    """Run validation and policy flagging concurrently."""
+    validation, policy = await asyncio.gather(
+        validate_extraction(extraction, client=client, debug=debug),
+        flag_policies(extraction, client=client, debug=debug),
+    )
+    return validation, policy
+
 # return content blocks representing the user's document
 def _read_input(args: argparse.Namespace, *, debug: bool) -> list[ContentBlock]:
     if args.file is None:
