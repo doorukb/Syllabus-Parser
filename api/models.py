@@ -1,5 +1,5 @@
 from __future__ import annotations
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from demo_extract import SyllabusExtraction, ValidationResult, PolicyFlagResult
 
 class ExtractionResponse(BaseModel):
