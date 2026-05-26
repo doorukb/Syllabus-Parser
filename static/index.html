@@ -305,6 +305,164 @@
       btn.disabled = false;
     }
   }
+
+  let currentExtraction = null;
+  let chatHistory = [];
+
+  function showResults(data) {
+    currentExtraction = data.extraction;
+    chatHistory = [];
+
+    const el = document.getElementById('results-screen');
+    el.style.display = 'block';
+    document.getElementById('upload-screen').style.display = 'none';
+
+    el.innerHTML = `
+      ${renderOverview(data.extraction, data.validation)}
+      ${renderGrading(data.extraction.grading_weights)}
+      ${renderDates(data.extraction.important_dates)}
+      ${renderPolicies(data.extraction.policy_bullets, data.policy_flags)}
+      <button class="btn-secondary" onclick="resetUI()">Parse another syllabus</button>
+      ${renderChat()}
+    `;
+
+    document.getElementById('chat-send').addEventListener('click', sendChat);
+    document.getElementById('chat-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+    });
+  }
+
+  function renderOverview(extraction, validation) {
+    const sumOk = validation.grading_sums_to_100;
+    return `
+      <div class="card">
+        <div class="card-title">Overview</div>
+        <div class="result-row">
+          <span class="result-label">Course</span>
+          <span class="result-value">${extraction.course_code || '—'}</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Instructor email</span>
+          <span class="result-value">${extraction.instructor_email || '—'}</span>
+        </div>
+        <div class="result-row">
+          <span class="result-label">Grading total</span>
+          <span class="result-value">
+            <span class="pill ${sumOk ? 'pill-ok' : 'pill-warn'}">
+              ${validation.grading_total}% ${sumOk ? '✓' : '⚠ not 100%'}
+            </span>
+          </span>
+        </div>
+      </div>`;
+  }
+
+  function renderGrading(weights) {
+    if (!weights.length) return '';
+    const rows = weights.map(w => `
+      <div class="result-row">
+        <span class="result-label">${w.component}</span>
+        <span class="result-value">${w.percent}%</span>
+      </div>`).join('');
+    return `<div class="card"><div class="card-title">Grading</div>${rows}</div>`;
+  }
+
+  function renderDates(dates) {
+    if (!dates.length) return '';
+    const rows = dates.map(d => `
+      <div class="result-row">
+        <span class="result-label">${d.label}</span>
+        <span class="result-value">${d.date_iso || d.raw_text || '—'}</span>
+      </div>`).join('');
+    return `<div class="card"><div class="card-title">Important dates</div>${rows}</div>`;
+  }
+
+  function renderPolicies(bullets, flags) {
+    if (!bullets.length) return '';
+    const flagMap = {};
+    flags.flags.forEach(f => { flagMap[f.policy] = f; });
+
+    const items = bullets.map(b => {
+      const flag = flagMap[b];
+      const pill = flag
+        ? `<span class="pill pill-${flag.severity}" title="${flag.reason}">${flag.severity}</span>`
+        : '';
+      return `<div class="policy-item">${pill}<span class="policy-text">${b}</span></div>`;
+    }).join('');
+
+    return `<div class="card"><div class="card-title">Policies</div>${items}</div>`;
+  }
+
+  function resetUI() {
+    document.getElementById('upload-screen').style.display = 'block';
+    document.getElementById('results-screen').style.display = 'none';
+    document.getElementById('results-screen').innerHTML = '';
+    document.getElementById('file-input').value = '';
+    document.getElementById('text-input').value = '';
+    document.getElementById('extract-btn').disabled = false;
+    setStatus('');
+    currentExtraction = null;
+    chatHistory = [];
+  }
+
+  function renderChat() {
+    return `
+      <div class="card" id="chat-card">
+        <div class="card-title">Ask a question</div>
+        <div class="chat-messages" id="chat-messages">
+          <div class="msg msg-assistant">
+            Hi! Ask me anything about this syllabus — grading, policies, deadlines, anything.
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <textarea id="chat-input" placeholder="e.g. What happens if I submit late?"></textarea>
+          <button id="chat-send">Send</button>
+        </div>
+      </div>`;
+  }
+
+  function appendMessage(role, content) {
+    const container = document.getElementById('chat-messages');
+    const div = document.createElement('div');
+    div.className = `msg msg-${role}`;
+    div.textContent = content;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+  }
+
+  async function sendChat() {
+    const input = document.getElementById('chat-input');
+    const message = input.value.trim();
+    if (!message || !currentExtraction) return;
+
+    input.value = '';
+    appendMessage('user', message);
+
+    const sendBtn = document.getElementById('chat-send');
+    sendBtn.disabled = true;
+
+    try {
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          extraction: currentExtraction,
+          history: chatHistory,
+          message,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`Server error ${res.status}`);
+      const data = await res.json();
+      chatHistory = data.history;
+      appendMessage('assistant', data.answer);
+    } catch (err) {
+      appendMessage('assistant', `Error: ${err.message}`);
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
 </script>
 </body>
 </html>
